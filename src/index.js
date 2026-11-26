@@ -273,10 +273,77 @@ async function handleMessage(from, text) {
   return welcome();
 }
 
+// Ana sayfa
 app.get("/", (_req, res) => {
   res.status(200).send("Pera Döner WhatsApp bot is running.");
 });
 
+// GİZLİLİK POLİTİKASI
+app.get("/privacy", (_req, res) => {
+  res.status(200).send(`
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pera Döner - Gizlilik Politikası</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 40px auto;
+      padding: 20px;
+      line-height: 1.7;
+      color: #222;
+      background: #fff;
+    }
+    h1, h2 {
+      color: #8b1e16;
+    }
+  </style>
+</head>
+<body>
+  <h1>Pera Döner - Gizlilik Politikası</h1>
+  <p>Son güncelleme: 26 Kasım 2026</p>
+
+  <h2>1. Toplanan Bilgiler</h2>
+  <p>WhatsApp sipariş hizmetimiz kapsamında müşterilerimizden
+  ad ve soyad, telefon numarası, teslimat adresi ve sipariş
+  bilgileri alınabilir.</p>
+
+  <h2>2. Bilgilerin Kullanım Amacı</h2>
+  <p>Bu bilgiler sipariş oluşturmak, siparişi hazırlamak,
+  teslimatı gerçekleştirmek ve sipariş hakkında müşteriyle
+  iletişim kurmak amacıyla kullanılır.</p>
+
+  <h2>3. Bilgilerin İşlenmesi ve Paylaşılması</h2>
+  <p>Sipariş hizmeti WhatsApp Business Platform üzerinden
+  sunulmaktadır. Mesajlar WhatsApp ve Meta altyapısı üzerinden
+  işlenebilir. Siparişin hazırlanması ve teslim edilmesi için
+  gerekli bilgiler Pera Döner yetkililerine iletilir.</p>
+
+  <h2>4. Verilerin Saklanması ve Güvenliği</h2>
+  <p>Sipariş bilgileri hizmetin yürütülmesi ve ilgili yasal
+  yükümlülüklerin yerine getirilmesi için gerekli olduğu
+  ölçüde saklanır. Bilgilerin korunması için makul teknik
+  ve idari önlemler uygulanır.</p>
+
+  <h2>5. Kişisel Veri Talepleri</h2>
+  <p>Kişisel verilerinizle ilgili bilgi almak, düzeltme veya
+  silme talebinde bulunmak için aşağıdaki e-posta adresinden
+  bizimle iletişime geçebilirsiniz.</p>
+
+  <h2>6. İletişim</h2>
+  <p>
+    <strong>Pera Döner</strong><br>
+    E-posta: volkanozbirol6@gmail.com
+  </p>
+</body>
+</html>
+  `);
+});
+
+// WhatsApp webhook doğrulama
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
@@ -289,6 +356,7 @@ app.get("/webhook", (req, res) => {
   return res.sendStatus(403);
 });
 
+// WhatsApp gelen mesajları
 app.post("/webhook", async (req, res) => {
   console.log("Webhook isteği geldi.");
 
