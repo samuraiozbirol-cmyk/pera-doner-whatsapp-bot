@@ -1,15 +1,15 @@
 require("dotenv").config();
-const express = require("express");
 
+const express = require("express");
 const app = express();
 app.use(express.json());
 
 const {
-  PORT = 3000,
+  PORT = 10000,
   VERIFY_TOKEN,
   WHATSAPP_TOKEN,
   PHONE_NUMBER_ID,
-  GRAPH_API_VERSION,
+  GRAPH_API_VERSION = "v22.0",
   RESTAURANT_NOTIFY_NUMBER
 } = process.env;
 
@@ -36,15 +36,33 @@ const MENU = {
   "18": { name: "Şalgam", price: 40 }
 };
 
-const money = n => `${n} TL`;
-const menuText = () =>
-  "🍽️ *PERA DÖNER MENÜSÜ*\\n\\n" +
-  Object.entries(MENU).map(([key, item]) => `${key}. ${item.name} — ${money(item.price)}`).join("\\n") +
-  "\\n\\nÜrün numarasını yazın. Birden fazla ürün için sırayla seçebilirsiniz.\\nSiparişi bitirmek için *0* yazın.";
+const money = (n) => `${n} TL`;
+
+function menuText() {
+  const groups = [
+    ["DÖNER", ["1", "2", "3", "4", "5", "6", "7", "8", "9"]],
+    ["CİĞER", ["10", "11", "12", "13", "14", "15"]],
+    ["İÇECEKLER", ["16", "17", "18"]]
+  ];
+  const lines = ["🍽️ *PERA DÖNER MENÜSÜ*"];
+  for (const [heading, ids] of groups) {
+    lines.push("", `*${heading}*`);
+    for (const id of ids) {
+      const item = MENU[id];
+      lines.push(`${id}. ${item.name} — ${money(item.price)}`);
+    }
+  }
+  lines.push("", "Sipariş için ürün numaralarını virgülle yazın. Örnek: 1, 16");
+  return lines.join("\n");
+}
+
+function welcome() {
+  return "Merhaba! 👋 *Pera Döner* sipariş hattına hoş geldiniz.\n\nMenüyü görmek için *2*, sipariş vermek için *1* yazın.\nİptal etmek için istediğiniz zaman *iptal* yazabilirsiniz.";
+}
 
 async function sendText(to, body) {
-  if (!WHATSAPP_TOKEN || !PHONE_NUMBER_ID || !GRAPH_API_VERSION || GRAPH_API_VERSION === "vXX.X") {
-    console.log("WhatsApp API ayarları eksik; mesaj gönderilmedi:", { to, body });
+  if (!WHATSAPP_TOKEN || !PHONE_NUMBER_ID) {
+    console.error("WHATSAPP_TOKEN veya PHONE_NUMBER_ID eksik.");
     return;
   }
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${PHONE_NUMBER_ID}/messages`;
@@ -65,13 +83,9 @@ async function sendText(to, body) {
   const data = await response.json();
   if (!response.ok) {
     console.error("WhatsApp API hatası:", data);
-    throw new Error("WhatsApp mesajı gönderilemedi");
+    throw new Error("WhatsApp mesajı gönderilemedi.");
   }
   return data;
-}
-
-function welcome() {
-  return "Merhaba! 👋 *Pera Döner* sipariş hattına hoş geldiniz.\\n\\nSipariş vermek için *1*, menüyü görmek için *2* yazın.";
 }
 
 function getSession(from) {
@@ -79,61 +93,86 @@ function getSession(from) {
   return sessions.get(from);
 }
 
+function summary(s) {
+  return [
+    "🧾 *SİPARİŞ ÖZETİ*",
+    ...s.items.map(x => `• ${x.name} — ${money(x.price)}`),
+    "",
+    `*Toplam: ${money(s.total)}*`,
+    `Ad Soyad: ${s.name}`,
+    `Adres: ${s.address}`,
+    `Ödeme: ${s.payment}`,
+    `Not: ${s.notes}`,
+    "",
+    "Siparişi onaylıyor musunuz?",
+    "1. Evet, siparişi ver",
+    "2. Hayır, iptal et"
+  ].join("\n");
+}
+
 async function handleMessage(from, text) {
-  const input = (text || "").trim();
-  const s = getSession(from);
+  const input = String(text || "").trim();
+  const lower = input.toLocaleLowerCase("tr-TR");
 
-  if (/^(iptal|vazgeç|cancel)$/i.test(input)) {
+  if (/^(iptal|vazgeç|cancel)$/i.test(lower)) {
     sessions.delete(from);
-    return "Sipariş işleminiz iptal edildi. Yeniden başlamak için *Merhaba* yazabilirsiniz.";
+    return "Sipariş işlemi iptal edildi. Yeni işlem için *Merhaba* yazabilirsiniz.";
   }
-
-  if (s.step === "home") {
-    if (input === "1" || /merhaba|selam|başla|basla/i.test(input)) {
-      s.step = "menu";
-      return menuText();
-    }
-    if (input === "2" || /menü|menu/i.test(input)) return menuText();
+  if (/^(merhaba|selam|hi|hello|başla|start)$/i.test(lower)) {
+    sessions.delete(from);
     return welcome();
   }
 
-  if (s.step === "menu") {
-    if (input === "0") {
-      if (!s.items.length) return "Henüz ürün seçmediniz. Ürün numarası yazın veya iptal etmek için *iptal* yazın.";
-      s.step = "name";
-      return "Siparişinizi aldım. Adınızı ve soyadınızı yazar mısınız?";
+  const s = getSession(from);
+
+  if (input === "2" || lower === "menü" || lower === "menu") return menuText();
+
+  if (s.step === "home") {
+    if (input === "1") {
+      s.step = "items";
+      return `${menuText()}\n\nAlmak istediğiniz ürünlerin numaralarını virgülle yazın.`;
     }
-    const item = MENU[input];
-    if (!item) return "Geçerli bir ürün numarası yazın. Siparişi bitirmek için *0* yazın.";
-    s.items.push(item);
-    const total = s.items.reduce((sum, x) => sum + x.price, 0);
-    return `✅ ${item.name} eklendi.\\nAra toplam: ${money(total)}\\n\\nBaşka ürün eklemek için numara yazın. Bitirmek için *0* yazın.`;
+    return welcome();
+  }
+
+  if (s.step === "items") {
+    const ids = input.split(/[,\s]+/).filter(Boolean);
+    const selected = ids.map(id => MENU[id]).filter(Boolean);
+    if (!ids.length || selected.length !== ids.length) {
+      return "Geçerli ürün numaralarını yazın. Örnek: 1, 16";
+    }
+    s.items = selected.map(item => ({ ...item }));
+    s.step = "name";
+    return `Seçiminiz:\n${s.items.map(x => `• ${x.name} — ${money(x.price)}`).join("\n")}\n\nAdınızı ve soyadınızı yazar mısınız?`;
   }
 
   if (s.step === "name") {
+    if (input.length < 2) return "Lütfen adınızı ve soyadınızı yazın.";
     s.name = input;
     s.step = "address";
-    return "Teslimat adresinizi mahalle, cadde/sokak, bina ve daire numarasıyla yazar mısınız? (Sultangazi)";
+    return "Teslimat adresinizi mahalle, cadde/sokak, bina ve daire numarasıyla birlikte yazar mısınız?\n\n📍 Şimdilik Sultangazi'ye teslimat yapıyoruz.";
   }
 
   if (s.step === "address") {
+    if (input.length < 8) return "Lütfen açık teslimat adresinizi biraz daha ayrıntılı yazın.";
     s.address = input;
     s.step = "payment";
-    return "Ödeme tercihiniz nedir?\\n1. Kapıda nakit\\n2. Kapıda kart";
+    return "Ödeme tercihiniz nedir?\n1. Kapıda nakit\n2. Kapıda kart";
   }
 
   if (s.step === "payment") {
-    if (!["1", "2"].includes(input)) return "Lütfen 1 (Kapıda nakit) veya 2 (Kapıda kart) yazın.";
-    s.payment = input === "1" ? "Kapıda nakit" : "Kapıda kart";
+    if (input === "1") s.payment = "Kapıda nakit";
+    else if (input === "2") s.payment = "Kapıda kart";
+    else return "Lütfen 1 (Kapıda nakit) veya 2 (Kapıda kart) yazın.";
     s.step = "notes";
-    return "Sipariş notunuz var mı? Yoksa *yok* yazın.";
+    return "Siparişinizle ilgili bir notunuz var mı? Örneğin: acısız olsun, soğan olmasın.\nNot yoksa *yok* yazın.";
   }
 
   if (s.step === "notes") {
-    s.notes = input.toLowerCase() === "yok" ? "Yok" : input;
+    s.notes = lower === "yok" ? "Yok" : input;
+    s.total = s.items.reduce((sum, item) => sum + item.price, 0);
     s.step = "confirm";
-    s.total = s.items.reduce((sum, x) => sum + x.price, 0);
-    return `🧾 *SİPARİŞ ÖZETİ*\\n${s.items.map(x => `• ${x.name} — ${money(x.price)}`).join("\\n")}\\n\\n*Toplam: ${money(s.total)}*\\nAd Soyad: ${s.name}\\nAdres: ${s.address}\\nÖdeme: ${s.payment}\\nNot: ${s.notes}\\n\\nOnaylıyor musunuz?\\n1. Evet, siparişi ver\\n2. Hayır, iptal et`;
+    return summary(s);
   }
 
   if (s.step === "confirm") {
@@ -142,11 +181,27 @@ async function handleMessage(from, text) {
       return "Siparişiniz iptal edildi. Yeni sipariş için *Merhaba* yazabilirsiniz.";
     }
     if (input !== "1") return "Lütfen 1 (Onayla) veya 2 (İptal) yazın.";
-    const orderText = `🔔 *YENİ PERA DÖNER SİPARİŞİ*\\nMüşteri: ${s.name}\\nWhatsApp: ${from}\\n${s.items.map(x => `• ${x.name} — ${money(x.price)}`).join("\\n")}\\nToplam: ${money(s.total)}\\nAdres: ${s.address}\\nÖdeme: ${s.payment}\\nNot: ${s.notes}`;
+
+    const orderText = [
+      "🔔 *YENİ PERA DÖNER SİPARİŞİ*",
+      `Müşteri: ${s.name}`,
+      `WhatsApp: ${from}`,
+      ...s.items.map(x => `• ${x.name} — ${money(x.price)}`),
+      `Toplam: ${money(s.total)}`,
+      `Adres: ${s.address}`,
+      `Ödeme: ${s.payment}`,
+      `Not: ${s.notes}`
+    ].join("\n");
+
     if (RESTAURANT_NOTIFY_NUMBER) {
-      await sendText(RESTAURANT_NOTIFY_NUMBER, orderText);
+      try {
+        await sendText(RESTAURANT_NOTIFY_NUMBER, orderText);
+      } catch (error) {
+        console.error("Restoran bildirimi gönderilemedi:", error.message);
+        console.log(orderText);
+      }
     } else {
-      console.warn("RESTAURANT_NOTIFY_NUMBER tanımlı değil; restoran bildirimi atlandı.");
+      console.warn("RESTAURANT_NOTIFY_NUMBER tanımlı değil; bildirim atlandı.");
       console.log(orderText);
     }
     sessions.delete(from);
@@ -158,11 +213,14 @@ async function handleMessage(from, text) {
 }
 
 app.get("/", (_req, res) => res.status(200).send("Pera Döner WhatsApp bot is running."));
+
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
-  if (mode === "subscribe" && token && token === VERIFY_TOKEN) return res.status(200).send(challenge);
+  if (mode === "subscribe" && token && token === VERIFY_TOKEN) {
+    return res.status(200).send(challenge);
+  }
   return res.sendStatus(403);
 });
 
@@ -183,4 +241,6 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`Pera Döner bot ${PORT} portunda çalışıyor.`));
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Pera Döner bot ${PORT} portunda çalışıyor.`);
+});
